@@ -31,7 +31,7 @@
 </template>
 
 <script setup>
-import { ref, onUnmounted } from 'vue';
+import { ref, onUnmounted, defineEmits } from 'vue';
 
 const isRecording = ref(false);
 const recordingTime = ref(0);
@@ -40,6 +40,8 @@ const error = ref(null);
 const mediaRecorder = ref(null);
 const chunks = ref([]);
 const timerInterval = ref(null);
+
+const emit = defineEmits(['recording-complete']);
 
 // Format time in MM:SS
 const formatTime = (seconds) => {
@@ -73,11 +75,7 @@ const startRecording = async () => {
     });
     chunks.value = [];
 
-    mediaRecorder.value.ondataavailable = (e) => {
-      if (e.data.size > 0) {
-        chunks.value.push(e.data);
-      }
-    };
+    mediaRecorder.value.ondataavailable = handleDataAvailable;
 
     mediaRecorder.value.onstop = () => {
       const blob = new Blob(chunks.value, { type: 'audio/webm' });
@@ -85,6 +83,7 @@ const startRecording = async () => {
         URL.revokeObjectURL(audioUrl.value);
       }
       audioUrl.value = URL.createObjectURL(blob);
+      emit('recording-complete', blob);
       
       // Stop all tracks
       stream.getTracks().forEach(track => track.stop());
@@ -110,18 +109,25 @@ const stopRecording = () => {
 };
 
 // Toggle recording
-const toggleRecording = () => {
+const toggleRecording = async () => {
   if (isRecording.value) {
     stopRecording();
   } else {
-    startRecording();
+    await startRecording();
   }
 };
 
 // Get the recorded audio blob
 const getAudioBlob = () => {
-  if (!chunks.value.length) return null;
+  if (chunks.value.length === 0) return null;
   return new Blob(chunks.value, { type: 'audio/webm' });
+};
+
+// Add dataavailable handler to emit the blob
+const handleDataAvailable = (e) => {
+  if (e.data.size > 0) {
+    chunks.value.push(e.data);
+  }
 };
 
 // Clean up on component unmount

@@ -1,180 +1,124 @@
 <template>
-  <div class="min-h-screen bg-gray-50">
-    <header class="bg-white shadow-sm">
-      <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-4">
-        <h1 class="text-2xl font-bold text-gray-900">Djassapro</h1>
+  <div class="container mx-auto p-4">
+    <h1 class="text-3xl font-bold mb-8 text-center text-gray-800">Djassapro Ad Generator</h1>
+
+    <!-- Voice Recorder Component -->
+    <div class="bg-white rounded-lg shadow-md p-6 mb-6">
+      <h2 class="text-xl font-semibold mb-4 text-gray-700">Record Your Message</h2>
+      <VoiceRecorder @recording-complete="handleRecordingComplete" />
+
+      <button 
+        @click="submitRecording" 
+        :disabled="!recordingBlob || isSubmitting"
+        class="mt-4 w-full bg-blue-600 text-white px-6 py-2 rounded-lg hover:bg-blue-700 disabled:bg-gray-400 disabled:cursor-not-allowed"
+      >
+        {{ isSubmitting ? 'Processing...' : 'Submit Recording' }}
+      </button>
+    </div>
+
+    <!-- Transcription Display -->
+    <div v-if="transcription" class="bg-white rounded-lg shadow-md p-6 mb-6">
+      <h2 class="text-xl font-semibold mb-4 text-gray-700">Transcription</h2>
+      <p class="text-gray-600">{{ transcription }}</p>
+      <button 
+        @click="generateAdMessage" 
+        class="mt-4 w-full bg-green-600 text-white px-6 py-2 rounded-lg hover:bg-green-700"
+      >
+        Generate Ad Message
+      </button>
+    </div>
+
+    <!-- Generated Message Display -->
+    <div v-if="generatedMessage" class="bg-white rounded-lg shadow-md p-6 mb-6">
+      <h2 class="text-xl font-semibold mb-4 text-gray-700">Generated Ad Message</h2>
+      <p class="text-gray-600 whitespace-pre-line">{{ generatedMessage }}</p>
+      
+      <div class="mt-4 space-y-4">
+        <button 
+          @click="generateVoice"
+          :disabled="isGeneratingVoice" 
+          class="w-full bg-purple-600 text-white px-6 py-2 rounded-lg hover:bg-purple-700 disabled:bg-gray-400 disabled:cursor-not-allowed"
+        >
+          {{ isGeneratingVoice ? 'Generating Voice...' : 'Generate Voice' }}
+        </button>
+
+        <button 
+          @click="shareOnWhatsApp"
+          class="w-full bg-green-600 text-white px-6 py-2 rounded-lg hover:bg-green-700"
+        >
+          Share on WhatsApp
+        </button>
       </div>
-    </header>
+    </div>
 
-    <main class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
-      <div class="card">
-        <div class="space-y-6">
-          <!-- Voice Recording Section -->
-          <div>
-            <h2 class="text-xl font-semibold text-gray-900 mb-4">Record Your Message</h2>
-            <div class="flex flex-col items-center space-y-4 p-6 bg-gray-50 rounded-lg border-2 border-dashed border-gray-300">
-              <VoiceRecorder ref="voiceRecorder" />
-              <button 
-                v-if="!isLoading && voiceRecorder?.audioUrl" 
-                @click="submitRecording" 
-                class="btn btn-secondary"
-              >
-                Submit Recording
-              </button>
-              <div v-if="isLoading" class="text-gray-600">
-                Processing your recording...
-              </div>
-            </div>
-          </div>
-
-          <!-- Transcription Section -->
-          <div v-if="transcription" class="animate-fade-in">
-            <h2 class="text-xl font-semibold text-gray-900 mb-4">Transcription</h2>
-            <div class="bg-gray-50 rounded-lg p-4">
-              <p class="text-gray-700">{{ transcription }}</p>
-              <div class="mt-4 flex justify-end">
-                <button @click="generateMessage" class="btn btn-primary">
-                  Generate Ad Message
-                </button>
-              </div>
-            </div>
-          </div>
-
-          <!-- Generated Message Section -->
-          <div v-if="generatedMessage" class="animate-fade-in">
-            <h2 class="text-xl font-semibold text-gray-900 mb-4">Generated Ad Message</h2>
-            <div class="bg-gray-50 rounded-lg p-4">
-              <p class="text-gray-700 whitespace-pre-line">{{ generatedMessage }}</p>
-              <div class="mt-4 flex justify-end space-x-4">
-                <button @click="generateVoice" class="btn btn-primary" :disabled="isGeneratingVoice">
-                  {{ isGeneratingVoice ? 'Generating Voice...' : 'Generate Voice' }}
-                </button>
-                <button class="btn btn-secondary">
-                  Share on WhatsApp
-                </button>
-              </div>
-            </div>
-          </div>
-
-          <!-- Voice Preview Section -->
-          <div v-if="audioUrl" class="animate-fade-in">
-            <h2 class="text-xl font-semibold text-gray-900 mb-4">Voice Preview</h2>
-            <div class="bg-gray-50 rounded-lg p-4">
-              <audio controls :src="audioUrl" class="w-full"></audio>
-              <div class="mt-4">
-                <label class="block text-sm font-medium text-gray-700 mb-2">Select Voice</label>
-                <select 
-                  v-model="selectedVoice" 
-                  class="mt-1 block w-full pl-3 pr-10 py-2 text-base border-gray-300 focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm rounded-md"
-                >
-                  <option v-for="voice in voices" :key="voice.voice_id" :value="voice.voice_id">
-                    {{ voice.name }} ({{ voice.category }})
-                  </option>
-                </select>
-              </div>
-            </div>
-          </div>
-        </div>
-      </div>
-    </main>
+    <!-- Generated Voice Display -->
+    <div v-if="generatedVoiceUrl" class="bg-white rounded-lg shadow-md p-6">
+      <h2 class="text-xl font-semibold mb-4 text-gray-700">Generated Voice</h2>
+      <audio :src="generatedVoiceUrl" controls class="w-full"></audio>
+    </div>
   </div>
 </template>
 
 <script setup>
-import { ref, onMounted } from 'vue';
-import VoiceRecorder from './components/VoiceRecorder.vue';
+import { ref } from 'vue'
+import VoiceRecorder from './components/VoiceRecorder.vue'
 
-const voiceRecorder = ref(null);
-const isLoading = ref(false);
-const transcription = ref('');
-const generatedMessage = ref('');
-const audioUrl = ref('');
-const isGeneratingVoice = ref(false);
-const selectedVoice = ref('ohItIVrXTBI80RrUECOD'); // Guillaume voice by default
-const voices = ref([]);
+const recordingBlob = ref(null)
+const audioUrl = ref(null)
+const transcription = ref('')
+const generatedMessage = ref('')
+const generatedVoiceUrl = ref(null)
+const isSubmitting = ref(false)
+const isGeneratingVoice = ref(false)
 
-// Fetch available voices on component mount
-onMounted(async () => {
-  try {
-    const response = await fetch('http://localhost:8000/api/voices');
-    const data = await response.json();
-    voices.value = data.voices;
-  } catch (error) {
-    console.error('Error fetching voices:', error);
+const handleRecordingComplete = (blob) => {
+  console.log('Recording complete, blob size:', blob.size)
+  recordingBlob.value = blob
+  if (audioUrl.value) {
+    URL.revokeObjectURL(audioUrl.value)
   }
-});
-
-const API_BASE_URL = 'http://localhost:8000';
+  audioUrl.value = URL.createObjectURL(blob)
+}
 
 const submitRecording = async () => {
-  if (!voiceRecorder.value) return;
-  
-  const audioBlob = voiceRecorder.value.getAudioBlob();
-  if (!audioBlob) {
-    alert('No recording available');
-    return;
+  if (!recordingBlob.value) {
+    alert('Please record a message first')
+    return
   }
 
-  isLoading.value = true;
+  isSubmitting.value = true
+  const formData = new FormData()
+  formData.append('audio', recordingBlob.value, 'recording.webm')
+
   try {
-    // Create a new File object from the Blob
-    const audioFile = new File([audioBlob], 'recording.webm', {
-      type: 'audio/webm',
-      lastModified: Date.now()
-    });
+    const controller = new AbortController()
+    const timeoutId = setTimeout(() => controller.abort(), 30000) // 30 second timeout
 
-    const formData = new FormData();
-    formData.append('audio', audioFile);
-
-    console.log('Sending audio file:', audioFile);
-    
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 30000); // 30 second timeout
-
-    const response = await fetch(`${API_BASE_URL}/api/transcribe`, {
+    const response = await fetch('http://localhost:8000/api/transcribe', {
       method: 'POST',
       body: formData,
-      signal: controller.signal,
-      mode: 'cors',
-      credentials: 'include'
-    });
+      signal: controller.signal
+    })
 
-    clearTimeout(timeoutId);
+    clearTimeout(timeoutId)
 
     if (!response.ok) {
-      const errorText = await response.text();
-      console.error('Server error:', errorText);
-      throw new Error(`Server error: ${response.status}`);
+      throw new Error(`HTTP error! status: ${response.status}`)
     }
 
-    const data = await response.json();
-    console.log('Transcription response:', data);
-    
-    if (!data.text) {
-      throw new Error('No transcription text received');
-    }
-    
-    transcription.value = data.text;
+    const data = await response.json()
+    transcription.value = data.text
   } catch (error) {
-    console.error('Error submitting recording:', error);
-    if (error.name === 'AbortError') {
-      alert('Request timed out. Please try again.');
-    } else if (error.name === 'TypeError' && error.message.includes('Failed to fetch')) {
-      alert('Network error: Please check your connection and try again');
-    } else {
-      alert(`Error: ${error.message}`);
-    }
+    console.error('Error:', error)
+    alert('Error submitting recording. Please try again.')
   } finally {
-    isLoading.value = false;
+    isSubmitting.value = false
   }
-};
+}
 
-const generateMessage = async () => {
-  if (!transcription.value) return;
-  
-  isLoading.value = true;
+const generateAdMessage = async () => {
   try {
-    const response = await fetch(`${API_BASE_URL}/api/generate-message`, {
+    const response = await fetch('http://localhost:8000/api/generate-message', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -182,23 +126,25 @@ const generateMessage = async () => {
       body: JSON.stringify({
         text: transcription.value,
         tone: 'friendly'
-      }),
-    });
-    
-    const data = await response.json();
-    generatedMessage.value = data.message;
+      })
+    })
+
+    if (!response.ok) {
+      throw new Error(`HTTP error! status: ${response.status}`)
+    }
+
+    const data = await response.json()
+    generatedMessage.value = data.message
   } catch (error) {
-    console.error('Error generating message:', error);
-    alert('Error generating message. Please try again.');
-  } finally {
-    isLoading.value = false;
+    console.error('Error:', error)
+    alert('Error generating message. Please try again.')
   }
-};
+}
 
 const generateVoice = async () => {
-  if (!generatedMessage.value) return;
+  if (!generatedMessage.value) return
   
-  isGeneratingVoice.value = true;
+  isGeneratingVoice.value = true
   try {
     const response = await fetch('http://localhost:8000/api/text-to-speech', {
       method: 'POST',
@@ -206,51 +152,30 @@ const generateVoice = async () => {
         'Content-Type': 'application/json',
       },
       body: JSON.stringify({
-        text: generatedMessage.value,
-        voice_id: selectedVoice.value
+        text: generatedMessage.value
       })
-    });
+    })
 
     if (!response.ok) {
-      const errorData = await response.json();
-      throw new Error(errorData.detail || 'Error generating voice');
+      const errorData = await response.json()
+      throw new Error(errorData.detail || 'Error generating voice')
     }
 
-    const audioBlob = await response.blob();
-    if (audioUrl.value) {
-      URL.revokeObjectURL(audioUrl.value);
+    const audioBlob = await response.blob()
+    if (generatedVoiceUrl.value) {
+      URL.revokeObjectURL(generatedVoiceUrl.value)
     }
-    audioUrl.value = URL.createObjectURL(audioBlob);
+    generatedVoiceUrl.value = URL.createObjectURL(audioBlob)
   } catch (error) {
-    console.error('Error generating voice:', error);
-    alert(error.message);
+    console.error('Error generating voice:', error)
+    alert(error.message)
   } finally {
-    isGeneratingVoice.value = false;
+    isGeneratingVoice.value = false
   }
-};
+}
 
-const resetAll = () => {
-  transcription.value = '';
-  generatedMessage.value = '';
-  if (voiceRecorder.value) {
-    voiceRecorder.value.audioUrl = null;
-  }
-};
+const shareOnWhatsApp = () => {
+  const text = encodeURIComponent(generatedMessage.value)
+  window.open(`https://wa.me/?text=${text}`, '_blank')
+}
 </script>
-
-<style>
-.animate-fade-in {
-  animation: fadeIn 0.5s ease-in;
-}
-
-@keyframes fadeIn {
-  from {
-    opacity: 0;
-    transform: translateY(10px);
-  }
-  to {
-    opacity: 1;
-    transform: translateY(0);
-  }
-}
-</style>

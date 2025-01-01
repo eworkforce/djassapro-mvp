@@ -13,7 +13,8 @@ import json
 import subprocess
 from google.cloud import storage
 import vertexai
-from vertexai.generative_models import GenerativeModel, Part
+from vertexai import generative_models
+from vertexai.language_models import TextGenerationModel
 import requests
 import uuid
 import aiofiles
@@ -64,7 +65,7 @@ app = FastAPI(title="Djassapro MVP API")
 # Configure CORS
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5175"],  # Frontend URL
+    allow_origins=["http://localhost:5174", "http://localhost:5173"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -73,11 +74,11 @@ app.add_middleware(
 class MessageRequest(BaseModel):
     text: str
     tone: Optional[str] = "friendly"
-    voice_id: Optional[str] = "ohItIVrXTBI80RrUECOD"  # Default French voice
+    voice_id: Optional[str] = "Fo36sCvJyueYOBE0TqjC"  # Default French voice
 
 class TTSRequest(BaseModel):
     text: str
-    voice_id: Optional[str] = "ohItIVrXTBI80RrUECOD"  # Default French voice
+    voice_id: Optional[str] = "Fo36sCvJyueYOBE0TqjC"  # Cousine Djassapro voice
     optimize_streaming_latency: Optional[int] = 0
     model_id: Optional[str] = "eleven_multilingual_v2"
 
@@ -153,10 +154,10 @@ async def transcribe_with_gemini(file_uri: str) -> dict:
     """Transcribe audio using Gemini Flash 2.0."""
     try:
         # Initialize Gemini Flash 2.0 model
-        model = GenerativeModel("gemini-2.0-flash-exp")
+        model = generative_models.GenerativeModel("gemini-2.0-flash-exp")
         
         # Create prompt for better French transcription
-        prompt = Part.from_text("""
+        prompt = generative_models.Part.from_text("""
         Transcrivez cet audio en français avec précision.
         Instructions spécifiques:
         - Conservez les expressions locales ivoiriennes
@@ -170,10 +171,10 @@ async def transcribe_with_gemini(file_uri: str) -> dict:
             file_path = file_uri[7:]  # Remove "file://" prefix
             with open(file_path, "rb") as f:
                 audio_data = f.read()
-            audio_part = Part.from_data(data=audio_data, mime_type="audio/wav")
+            audio_part = generative_models.Part.from_data(data=audio_data, mime_type="audio/wav")
         else:
             # For GCS files, use URI directly
-            audio_part = Part.from_uri(uri=file_uri, mime_type="audio/wav")
+            audio_part = generative_models.Part.from_uri(uri=file_uri, mime_type="audio/wav")
         
         # Generate response with audio understanding
         response = model.generate_content(
@@ -199,7 +200,7 @@ async def transcribe_with_gemini(file_uri: str) -> dict:
         logger.error(f"Error in Gemini transcription: {str(e)}")
         raise
 
-async def generate_voice(text: str, voice_id: str = "ohItIVrXTBI80RrUECOD", optimize_streaming_latency: int = 0) -> bytes:
+async def generate_voice(text: str, voice_id: str = "Fo36sCvJyueYOBE0TqjC", optimize_streaming_latency: int = 0) -> bytes:
     """Generate voice using Eleven Labs."""
     try:
         # Get available voices
@@ -212,9 +213,9 @@ async def generate_voice(text: str, voice_id: str = "ohItIVrXTBI80RrUECOD", opti
             
         # Create voice settings
         voice_settings = {
-            "stability": 0.71,
+            "stability": 0.60,
             "similarity_boost": 0.75,
-            "style": 0.0,
+            "style": 0.9,
             "use_speaker_boost": True
         }
         
@@ -245,24 +246,14 @@ async def read_root():
 @app.get("/api/voices")
 async def list_voices():
     """List available voices."""
-    try:
-        response = requests.get(f"{ELEVEN_LABS_API_URL}/voices", headers=HEADERS)
-        voices = response.json()["voices"]  # The voices are in a "voices" key
-        return {
-            "voices": [
-                {
-                    "voice_id": voice["voice_id"],
-                    "name": voice["name"],
-                    "category": voice.get("category", "unknown")
-                }
-                for voice in voices
-            ]
-        }
-    except Exception as e:
-        raise HTTPException(
-            status_code=500,
-            detail=f"Error listing voices: {str(e)}"
-        )
+    # Since we're using a fixed voice, just return that one
+    return {
+        "voices": [{
+            "voice_id": "Fo36sCvJyueYOBE0TqjC",
+            "name": "Cousine Djassapro",
+            "category": "custom"
+        }]
+    }
 
 @app.post("/api/transcribe")
 async def transcribe_audio(audio: UploadFile = File(...)):
@@ -369,7 +360,7 @@ async def generate_message(request: MessageRequest):
     """Generate ad message and optionally convert to speech."""
     try:
         # Initialize Gemini model for message generation
-        model = GenerativeModel("gemini-1.0-pro")
+        model = generative_models.GenerativeModel("gemini-1.0-pro")
         
         # Create prompt for ad message generation
         prompt = f"""
@@ -378,63 +369,49 @@ async def generate_message(request: MessageRequest):
 
         Instructions:
         - Ton: {request.tone}
+        - Tutoyer amicalement mais respectueusement
         - Utilisez des émojis appropriés
         - Incluez un appel à l'action
         - Adaptez le style au contexte ivoirien
-        - Ajoutez des hashtags pertinents
         - Gardez le message concis et impactant
         - Mettez en valeur les points clés
         """
         
-        # Generate the message
-        response = model.generate_content(
-            prompt,
-            generation_config={
-                "max_output_tokens": 1024,
-                "temperature": 0.7,
-                "top_p": 0.8,
-                "top_k": 40
-            }
-        )
-        
-        generated_message = response.text.strip()
-        
-        # If voice_id is provided, also generate speech
-        audio_url = None
-        if request.voice_id:
-            try:
-                # Generate audio
-                audio_content = await generate_voice(
-                    text=generated_message,
-                    voice_id=request.voice_id
+        try:
+            # Generate the message
+            response = model.generate_content(
+                prompt,
+                generation_config=generative_models.GenerationConfig(
+                    max_output_tokens=1024,
+                    temperature=0.7,
+                    top_p=0.8,
+                    top_k=40
                 )
+            )
+            
+            if not response or not response.text:
+                raise ValueError("No response generated from Gemini")
                 
-                # Create a temporary file to store the audio
-                temp_dir = Path("temp")
-                temp_dir.mkdir(exist_ok=True)
-                
-                output_path = temp_dir / f"ad_audio_{uuid.uuid4()}.mp3"
-                
-                # Save the audio content
-                async with aiofiles.open(output_path, 'wb') as f:
-                    await f.write(audio_content)
-                
-                # Get the public URL
-                audio_url = str(output_path)
-                
-            except Exception as e:
-                logger.error(f"Error generating speech: {str(e)}")
-                # Continue without audio if speech generation fails
-                pass
-        
-        return {
-            "message": generated_message,
-            "audio_url": audio_url
-        }
+            generated_message = response.text.strip()
+            
+            return {
+                "message": generated_message,
+                "audio_url": None
+            }
+            
+        except Exception as model_error:
+            logger.error(f"Text generation error: {str(model_error)}")
+            raise HTTPException(
+                status_code=500,
+                detail=f"Error generating message: {str(model_error)}"
+            )
         
     except Exception as e:
-        logger.error(f"Error generating message: {str(e)}")
-        raise HTTPException(status_code=500, detail=str(e))
+        logger.error(f"Error in generate_message: {str(e)}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Error generating message: {str(e)}"
+        )
 
 if __name__ == "__main__":
     uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=True)
