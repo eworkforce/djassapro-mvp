@@ -59,3 +59,14 @@ View this README to see the full list of Cloud APIs that we cover.
 
 
   kill -9 1819164 1819166
+
+  front end 
+  $ npm run dev
+
+   Back end 
+    uvicorn main:app --reload  
+
+    Voice ID: Fo36sCvJyueYOBE0TqjC
+
+    #- Adaptez le style au contexte ivoirien
+    DJ voice : https://elevenlabs.io/app/share/A5vVHzZjaw2oIqghZ9Bg

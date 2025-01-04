@@ -360,20 +360,24 @@ async def generate_message(request: MessageRequest):
     """Generate ad message and optionally convert to speech."""
     try:
         # Initialize Gemini model for message generation
-        model = generative_models.GenerativeModel("gemini-1.0-pro")
+        #model = generative_models.GenerativeModel("gemini-1.0-pro")
+        model = generative_models.GenerativeModel("gemini-2.0-flash-exp")
         
         # Create prompt for ad message generation
         prompt = f"""
-        Générez un message publicitaire professionnel et engageant en français à partir du texte suivant:
+        Générez un message publicitaire bref , et engageant en français professionnel à partir du texte suivant:
         "{request.text}"
 
         Instructions:
+        - Ne générer que le message publicitaire. Sans aucun autre texte de description
+        - Utilisez un style approprié
         - Ton: {request.tone}
+        - de 5 à 10 phases maximum
         - Tutoyer amicalement mais respectueusement
         - Utilisez des émojis appropriés
         - Incluez un appel à l'action
-        - Adaptez le style au contexte ivoirien
-        - Gardez le message concis et impactant
+        - le message doit etre inspurant et pousser à l'action 
+        - le message concis et impactant
         - Mettez en valeur les points clés
         """
         
