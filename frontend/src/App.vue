@@ -182,42 +182,36 @@ const generateVoice = async () => {
 }
 
 const shareOnWhatsApp = async () => {
-  // Prepare the message with proper formatting
-  const messageLines = [
-    "🎯 *Message Publicitaire*",
-    "",
-    generatedMessage.value,
-    "",
-    "🎵 *Audio Message*:",
-    generatedVoiceUrl.value ? "Écoutez le message vocal ci-dessous 🔊" : "",
-    "",
-    "📱 _Généré par Djassapro Ad Generator_"
-  ]
+  console.log('Share button clicked!');
   
-  const text = encodeURIComponent(messageLines.join('\n'))
-  
-  // Create a temporary link to share both text and audio
-  if (generatedVoiceBlob.value) {
-    try {
-      // Create a temporary file from the blob
-      const audioFile = new File([generatedVoiceBlob.value], 'message_audio.mp3', {
-        type: 'audio/mpeg'
-      })
-      
-      // Share using Web Share API if available
-      if (navigator.share) {
-        await navigator.share({
-          text: decodeURIComponent(text),
-          files: [audioFile]
-        })
-        return
-      }
-    } catch (error) {
-      console.error('Error sharing:', error)
-    }
+  try {
+    // Format message with header and footer
+    const messageLines = [
+      "📢 Message Publicitaire",
+      "",
+      generatedMessage.value,
+      "",
+      generatedVoiceUrl.value ? "🎵 Audio Message:" : "",
+      "",
+      "📱 Généré par Djassapro"
+    ].filter(line => line !== "");
+
+    const fullMessage = messageLines.join('\n');
+    console.log('Full message:', fullMessage);
+
+    // Basic URL encoding
+    const encodedText = encodeURIComponent(fullMessage);
+    console.log('Encoded text:', encodedText);
+
+    // Create WhatsApp link
+    const waLink = `https://api.whatsapp.com/send?text=${encodedText}`;
+    console.log('WhatsApp link:', waLink);
+    
+    // Open in new tab
+    window.open(waLink, '_blank');
+  } catch (error) {
+    console.error('Error:', error);
+    alert('Une erreur est survenue lors du partage sur WhatsApp. Veuillez réessayer.');
   }
-  
-  // Fallback to just text sharing if audio sharing fails or is not available
-  window.open(`https://wa.me/?text=${text}`, '_blank')
 }
 </script>
