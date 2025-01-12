@@ -57,7 +57,7 @@
     <!-- Generated Voice Display -->
     <div v-if="generatedVoiceUrl" class="bg-white rounded-lg shadow-md p-6">
       <h2 class="text-xl font-semibold mb-4 text-gray-700">Generated Voice</h2>
-      <audio ref="audioPlayer" :src="generatedVoiceUrl" controls class="w-full mb-4"></audio>
+      <audio ref="audioPlayer" :src="generatedVoiceUrl.streaming_url" controls class="w-full mb-4"></audio>
     </div>
   </div>
 </template>
@@ -75,6 +75,7 @@ const isSubmitting = ref(false)
 const isGeneratingVoice = ref(false)
 const audioPlayer = ref(null)
 const generatedVoiceBlob = ref(null)
+const audioElement = ref(null)
 
 const handleRecordingComplete = (blob) => {
   console.log('Recording complete, blob size:', blob.size)
@@ -166,13 +167,21 @@ const generateVoice = async () => {
       throw new Error(errorData.detail || 'Error generating voice')
     }
 
-    const audioBlob = await response.blob()
-    generatedVoiceBlob.value = audioBlob // Store the blob for sharing
+    const data = await response.json()
+    console.log('Voice generation response:', data)
     
-    if (generatedVoiceUrl.value) {
-      URL.revokeObjectURL(generatedVoiceUrl.value)
+    // Store both streaming and sharing URLs
+    generatedVoiceUrl.value = {
+      streaming_url: `http://localhost:8000${data.streaming_url}`,
+      sharing_url: data.sharing_url
     }
-    generatedVoiceUrl.value = URL.createObjectURL(audioBlob)
+    
+    // Create audio element for playback
+    if (!audioElement.value) {
+      audioElement.value = new Audio()
+    }
+    audioElement.value.src = generatedVoiceUrl.value.streaming_url
+    
   } catch (error) {
     console.error('Error generating voice:', error)
     alert(error.message)
@@ -185,14 +194,18 @@ const shareOnWhatsApp = async () => {
   console.log('Share button clicked!');
   
   try {
-    // Format message with header and footer
+    // Format message with header, audio link, and footer
     const messageLines = [
       "📢 Message Publicitaire",
       "",
       generatedMessage.value,
       "",
-      generatedVoiceUrl.value ? "🎵 Audio Message:" : "",
-      "",
+      // Only include audio section if we have a sharing URL
+      ...(generatedVoiceUrl.value?.sharing_url ? [
+        "🎵 Message Audio:",
+        generatedVoiceUrl.value.sharing_url,
+        ""
+      ] : []),
       "📱 Généré par Djassapro"
     ].filter(line => line !== "");
 

@@ -30,11 +30,14 @@ load_dotenv()
 # Get Google Cloud project settings
 PROJECT_ID = os.getenv('GOOGLE_CLOUD_PROJECT')
 ELEVENLABS_API_KEY = os.getenv('ELEVENLABS_API_KEY')
+BUCKET_NAME = os.getenv('BUCKET_NAME')
 
 if not PROJECT_ID:
     raise ValueError("GOOGLE_CLOUD_PROJECT not found in environment variables")
 if not ELEVENLABS_API_KEY:
     raise ValueError("ELEVENLABS_API_KEY not found in environment variables")
+if not BUCKET_NAME:
+    raise ValueError("BUCKET_NAME not found in environment variables")
 
 # Initialize Vertex AI
 vertexai.init(project=PROJECT_ID, location="us-central1")
@@ -46,19 +49,16 @@ HEADERS = {
     "xi-api-key": ELEVENLABS_API_KEY
 }
 
-# Initialize Storage client
+# Initialize Storage client and bucket
 storage_client = storage.Client()
-
-# Create or get bucket for temporary audio storage
-BUCKET_NAME = "djassapro-audio-temp"
 try:
-    bucket = storage_client.get_bucket(BUCKET_NAME)
+    bucket = storage_client.bucket(BUCKET_NAME)
+    if not bucket.exists():
+        logger.error(f"Bucket {BUCKET_NAME} does not exist")
+        bucket = None
 except Exception as e:
-    print(f"Error accessing bucket: {str(e)}")
-    print("Please make sure the bucket exists and the service account has access to it")
-    # Instead of failing, we'll create a local temp directory for audio files
-    temp_dir = Path("temp")
-    temp_dir.mkdir(exist_ok=True)
+    logger.error(f"Error accessing bucket: {str(e)}")
+    bucket = None
 
 app = FastAPI(title="Djassapro MVP API")
 
@@ -115,8 +115,9 @@ def convert_to_wav(input_path: str, output_path: str) -> bool:
 async def upload_to_gcs(file_path: str, content_type: str) -> str:
     """Upload file to Google Cloud Storage and return public URL."""
     try:
-        if not hasattr(storage_client, 'bucket'):
+        if not bucket:
             # If no bucket access, return local file path
+            logger.warning("No bucket access, using local file")
             return f"file://{file_path}"
             
         file_name = f"audio-{uuid.uuid4()}{Path(file_path).suffix}"
@@ -125,10 +126,10 @@ async def upload_to_gcs(file_path: str, content_type: str) -> str:
         # Upload the file
         blob.upload_from_filename(file_path, content_type=content_type)
         
-        # Make the blob publicly readable
-        blob.make_public()
+        # With uniform bucket-level access, we don't need to make individual blobs public
+        # Just construct the public URL
+        return f"https://storage.googleapis.com/{BUCKET_NAME}/{file_name}"
         
-        return f"gs://{BUCKET_NAME}/{file_name}"
     except Exception as e:
         logger.error(f"Error uploading to GCS: {str(e)}")
         # Return local file path as fallback
@@ -313,6 +314,8 @@ async def transcribe_audio(audio: UploadFile = File(...)):
 async def text_to_speech(request: TTSRequest):
     """Convert text to speech using Eleven Labs."""
     try:
+        logger.info(f"Generating voice for text: {request.text[:50]}...")
+        
         # Validate voice exists
         response = requests.get(f"{ELEVEN_LABS_API_URL}/voices", headers=HEADERS)
         voices = response.json().get("voices", [])
@@ -332,22 +335,33 @@ async def text_to_speech(request: TTSRequest):
             optimize_streaming_latency=request.optimize_streaming_latency
         )
         
+        logger.info("Voice generated successfully, saving to file...")
+        
         # Create temporary file
         temp_dir = Path("temp")
         temp_dir.mkdir(exist_ok=True)
         
-        output_path = temp_dir / f"tts_{uuid.uuid4()}.mp3"
+        temp_file = temp_dir / f"tts_{uuid.uuid4()}.mp3"
         
         # Save audio content
-        async with aiofiles.open(output_path, 'wb') as f:
+        async with aiofiles.open(temp_file, 'wb') as f:
             await f.write(audio_content)
         
-        # Return audio file
-        return FileResponse(
-            output_path,
-            media_type="audio/mpeg",
-            headers={"Content-Disposition": "attachment; filename=speech.mp3"}
-        )
+        logger.info(f"Audio saved to {temp_file}")
+        
+        # Upload to GCS and get public URL
+        public_url = await upload_to_gcs(str(temp_file), "audio/mpeg")
+        logger.info(f"Audio uploaded to GCS: {public_url}")
+        
+        # Return both streaming URL and public URL
+        response_data = {
+            "streaming_url": f"/api/audio/{temp_file.name}",  # For local playback
+            "sharing_url": public_url,  # For WhatsApp sharing
+            "filename": temp_file.name
+        }
+        
+        logger.info(f"Returning response: {response_data}")
+        return response_data
         
     except HTTPException as he:
         raise he
@@ -372,13 +386,14 @@ async def generate_message(request: MessageRequest):
         - Ne générer que le message publicitaire. Sans aucun autre texte de description
         - Utilisez un style approprié
         - Ton: {request.tone}
-        - de 5 à 10 phases maximum
+        - de 5 à 10 phases et 800 caracteres au maximum
         - Tutoyer amicalement mais respectueusement
         - Utilisez des émojis appropriés
         - Incluez un appel à l'action
         - le message doit etre inspurant et pousser à l'action 
         - le message concis et impactant
         - Mettez en valeur les points clés
+        - Ne pas utiliser de majuscules
         """
         
         try:
@@ -416,6 +431,25 @@ async def generate_message(request: MessageRequest):
             status_code=500,
             detail=f"Error generating message: {str(e)}"
         )
+
+@app.get("/api/audio/{filename}")
+async def get_audio(filename: str):
+    """Serve audio file for local playback."""
+    try:
+        file_path = Path("temp") / filename
+        if not file_path.exists():
+            raise HTTPException(status_code=404, detail="Audio file not found")
+            
+        return FileResponse(
+            file_path,
+            media_type="audio/mpeg",
+            headers={"Content-Disposition": f"attachment; filename={filename}"}
+        )
+    except HTTPException as he:
+        raise he
+    except Exception as e:
+        logger.error(f"Error serving audio file: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 if __name__ == "__main__":
     uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=True)
