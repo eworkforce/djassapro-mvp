@@ -62,6 +62,65 @@
           </svg>
           Share on WhatsApp
         </button>
+
+        <div class="space-y-2">
+          <label class="block text-sm font-medium text-gray-700">
+            Ajouter des images (optionnel)
+          </label>
+          <div class="space-y-4">
+            <div class="flex items-center space-x-4">
+              <input
+                type="file"
+                accept="image/*"
+                @change="handleImageUpload"
+                :disabled="isUploadingImage"
+                class="hidden"
+                ref="imageInput"
+                multiple
+              />
+              <button
+                @click="$refs.imageInput.click()"
+                :disabled="isUploadingImage"
+                class="px-4 py-2 bg-gray-600 text-white rounded-lg hover:bg-gray-700 disabled:bg-gray-400"
+              >
+                {{ isUploadingImage ? 'Téléchargement...' : 'Choisir des images' }}
+              </button>
+            </div>
+            
+            <!-- Image Previews Grid -->
+            <div v-if="uploadedImages.length > 0" class="grid grid-cols-4 gap-4">
+              <div v-for="(image, index) in uploadedImages" 
+                :key="index" 
+                class="relative w-20 h-20"
+              >
+                <img
+                  :src="image.url"
+                  class="w-full h-full object-cover rounded-lg"
+                  alt="Preview"
+                />
+                <button
+                  @click="removeImage(index)"
+                  class="absolute -top-2 -right-2 bg-red-500 text-white rounded-full p-1 hover:bg-red-600"
+                >
+                  <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
+                  </svg>
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <button 
+          @click="shareOnWhatsAppWithImage"
+          :disabled="!uploadedImages.length || isUploadingImage" 
+          class="w-full bg-green-600 text-white px-6 py-2 rounded-lg hover:bg-green-700 flex items-center justify-center gap-2"
+        >
+          <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" viewBox="0 0 24 24" fill="currentColor">
+            <path d="M12.031 6.172c-3.181 0-5.767 2.586-5.768 5.766-.001 1.298.38 2.27 1.019 3.287l-.582 2.128 2.182-.573c.978.58 1.911.928 3.145.929 3.178 0 5.767-2.587 5.768-5.766.001-3.187-2.575-5.771-5.764-5.771zm3.392 8.244c-.144.405-.837.774-1.17.824-.299.045-.677.063-1.092-.069-.252-.08-.575-.187-.988-.365-1.739-.751-2.874-2.502-2.961-2.617-.087-.116-.708-.94-.708-1.793s.448-1.273.607-1.446c.159-.173.346-.217.462-.217l.332.006c.106.005.249-.04.39.298.144.347.491 1.2.534 1.287.043.087.072.188.014.304-.058.116-.087.188-.173.289l-.26.304c-.087.086-.177.18-.076.354.101.174.449.741.964 1.201.662.591 1.221.774 1.394.86s.274.072.376-.043c.101-.116.433-.506.549-.68.116-.173.231-.145.39-.087s1.011.477 1.184.564.289.13.332.202c.045.072.045.419-.1.824z"/>
+          </svg>
+          Share on WhatsApp with Image
+        </button>
       </div>
     </div>
 
@@ -87,6 +146,9 @@ const isGeneratingVoice = ref(false)
 const audioPlayer = ref(null)
 const generatedVoiceBlob = ref(null)
 const audioElement = ref(null)
+const uploadedImages = ref([])
+const isUploadingImage = ref(false)
+const imageInput = ref(null)
 const generationProgress = ref(0)
 const generationStatus = ref('')
 
@@ -232,6 +294,50 @@ const generateVoice = async () => {
   }
 }
 
+const handleImageUpload = async (event) => {
+  const files = Array.from(event.target.files)
+  if (!files.length) return
+  
+  isUploadingImage.value = true
+  
+  try {
+    for (const file of files) {
+      const formData = new FormData()
+      formData.append('file', file)
+      
+      const response = await fetch('http://localhost:8000/api/upload-image', {
+        method: 'POST',
+        body: formData
+      })
+      
+      if (!response.ok) {
+        const errorData = await response.json()
+        throw new Error(errorData.detail || 'Erreur lors du téléchargement')
+      }
+      
+      const data = await response.json()
+      uploadedImages.value.push({
+        url: data.url,
+        filename: data.filename
+      })
+    }
+    
+  } catch (error) {
+    console.error('Error uploading image:', error)
+    alert(error.message)
+  } finally {
+    isUploadingImage.value = false
+    // Reset input to allow uploading the same file again
+    if (imageInput.value) {
+      imageInput.value.value = ''
+    }
+  }
+}
+
+const removeImage = (index) => {
+  uploadedImages.value.splice(index, 1)
+}
+
 const shareOnWhatsApp = async () => {
   console.log('Share button clicked!');
   
@@ -267,6 +373,67 @@ const shareOnWhatsApp = async () => {
   } catch (error) {
     console.error('Error:', error);
     alert('Une erreur est survenue lors du partage sur WhatsApp. Veuillez réessayer.');
+  }
+}
+
+const shareOnWhatsAppWithImage = async () => {
+  console.log('Share button clicked!');
+  
+  try {
+    let messageLines = []
+    
+    // Start with only the first image URL - no formatting, just raw URL
+    if (uploadedImages.value.length > 0) {
+      messageLines = [uploadedImages.value[0].url]
+      
+      // Add blank lines to separate content
+      messageLines.push('', '', '')
+    }
+    
+    // Add the main content
+    messageLines.push(
+      "📢 Message Publicitaire",
+      "",
+      generatedMessage.value
+    )
+    
+    // Add audio if available
+    if (generatedVoiceUrl.value?.sharing_url) {
+      messageLines.push(
+        "",
+        "🎵 Message Audio:",
+        generatedVoiceUrl.value.sharing_url
+      )
+    }
+    
+    // Add remaining images if there are any
+    if (uploadedImages.value.length > 1) {
+      messageLines.push(
+        "",
+        "📸 Autres Images:"
+      )
+      uploadedImages.value.slice(1).forEach((image, index) => {
+        messageLines.push(`${index + 2}. ${image.url}`)
+      })
+    }
+    
+    // Add signature at the end
+    messageLines.push("", "📱 Généré par Djassapro")
+    
+    // Join with newlines and remove any double spaces
+    const fullMessage = messageLines.join('\n').replace(/\n\n\n+/g, '\n\n')
+    
+    // Basic URL encoding
+    const encodedText = encodeURIComponent(fullMessage)
+    
+    // Create WhatsApp link
+    const waLink = `https://api.whatsapp.com/send?text=${encodedText}`
+    
+    // Open in new tab
+    window.open(waLink, '_blank')
+  } catch (error) {
+    console.error('Error:', error)
+    alert('Une erreur est survenue lors du partage sur WhatsApp. Veuillez réessayer.')
   }
 }
 </script>

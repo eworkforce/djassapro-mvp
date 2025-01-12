@@ -1,6 +1,6 @@
 from fastapi import FastAPI, UploadFile, File, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, Response
 from pydantic import BaseModel
 from typing import Optional
 import uvicorn
@@ -21,6 +21,7 @@ import aiofiles
 import logging
 import time
 from fastapi.responses import JSONResponse
+import aiohttp
 
 # Set up logging
 logging.basicConfig(level=logging.INFO)
@@ -118,23 +119,31 @@ async def upload_to_gcs(file_path: str, content_type: str) -> str:
     """Upload file to Google Cloud Storage and return public URL."""
     try:
         if not bucket:
-            # If no bucket access, return local file path
             logger.warning("No bucket access, using local file")
             return f"file://{file_path}"
             
-        file_name = f"audio-{uuid.uuid4()}{Path(file_path).suffix}"
-        blob = bucket.blob(file_name)
-        
-        # Upload the file
-        blob.upload_from_filename(file_path, content_type=content_type)
-        
-        # With uniform bucket-level access, we don't need to make individual blobs public
-        # Just construct the public URL
-        return f"https://storage.googleapis.com/{BUCKET_NAME}/{file_name}"
-        
+        # For images, ensure we have a proper extension and content type
+        is_image = content_type.startswith('image/')
+        if is_image:
+            # Ensure we have a proper image extension
+            extension = Path(file_path).suffix.lower()
+            if not extension:
+                extension = '.jpg'
+            file_name = f"image-{uuid.uuid4()}{extension}"
+            
+            # Return proxied URL for images
+            blob = bucket.blob(file_name)
+            blob.upload_from_filename(file_path, content_type=content_type)
+            return f"http://localhost:8000/api/image-proxy/{BUCKET_NAME}/{file_name}"
+        else:
+            # For non-images (like audio), use direct GCS URL
+            file_name = f"audio-{uuid.uuid4()}{Path(file_path).suffix}"
+            blob = bucket.blob(file_name)
+            blob.upload_from_filename(file_path, content_type=content_type)
+            return f"https://storage.googleapis.com/{BUCKET_NAME}/{file_name}"
+            
     except Exception as e:
         logger.error(f"Error uploading to GCS: {str(e)}")
-        # Return local file path as fallback
         return f"file://{file_path}"
 
 async def delete_from_gcs(gcs_uri: str):
@@ -373,68 +382,71 @@ async def text_to_speech(request: TTSRequest):
         logger.error(f"Error in text-to-speech: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
 
-@app.post("/api/generate-message")
-async def generate_message(request: MessageRequest):
-    """Generate ad message and optionally convert to speech."""
+@app.post("/api/upload-image")
+async def upload_image(file: UploadFile):
+    """Upload an image file to GCS and return its public URL."""
     try:
-        # Initialize Gemini model for message generation
-        #model = generative_models.GenerativeModel("gemini-1.0-pro")
-        model = generative_models.GenerativeModel("gemini-2.0-flash-exp")
+        logger.info(f"Uploading image: {file.filename}")
         
-        # Create prompt for ad message generation
-        prompt = f"""
-        Générez un message publicitaire bref , et engageant en français professionnel à partir du texte suivant:
-        "{request.text}"
-
-        Instructions:
-        - Ne générer que le message publicitaire. Sans aucun autre texte de description
-        - Utilisez un style approprié
-        - Ton: {request.tone}
-        - de 5 à 10 phases et 800 caracteres au maximum
-        - Tutoyer amicalement mais respectueusement
-        - Utilisez des émojis appropriés
-        - Incluez un appel à l'action
-        - le message doit etre inspurant et pousser à l'action 
-        - le message concis et impactant
-        - Mettez en valeur les points clés
-        - Ne pas utiliser de majuscules
-        """
+        # Validate content type
+        if not file.content_type.startswith('image/'):
+            raise HTTPException(status_code=400, detail="File must be an image")
         
-        try:
-            # Generate the message
-            response = model.generate_content(
-                prompt,
-                generation_config=generative_models.GenerationConfig(
-                    max_output_tokens=1024,
-                    temperature=0.7,
-                    top_p=0.8,
-                    top_k=40
-                )
-            )
+        # Create temp directory if it doesn't exist
+        temp_dir = Path("temp")
+        temp_dir.mkdir(exist_ok=True)
+        
+        # Ensure proper file extension
+        extension = Path(file.filename).suffix.lower()
+        if not extension or extension not in ['.jpg', '.jpeg', '.png', '.gif', '.webp']:
+            extension = '.jpg'  # Default to jpg
             
-            if not response or not response.text:
-                raise ValueError("No response generated from Gemini")
-                
-            generated_message = response.text.strip()
-            
-            return {
-                "message": generated_message,
-                "audio_url": None
-            }
-            
-        except Exception as model_error:
-            logger.error(f"Text generation error: {str(model_error)}")
-            raise HTTPException(
-                status_code=500,
-                detail=f"Error generating message: {str(model_error)}"
-            )
+        # Save uploaded file temporarily
+        temp_file = temp_dir / f"image_{uuid.uuid4()}{extension}"
+        async with aiofiles.open(temp_file, 'wb') as f:
+            content = await file.read()
+            await f.write(content)
+        
+        # Upload to GCS with proper content type
+        logger.info("Uploading to GCS...")
+        public_url = await upload_to_gcs(str(temp_file), file.content_type or "image/jpeg")
+        
+        logger.info(f"Image uploaded successfully: {public_url}")
+        return {
+            "url": public_url,
+            "filename": f"image{extension}"  # Return a clean filename
+        }
         
     except Exception as e:
-        logger.error(f"Error in generate_message: {str(e)}")
-        raise HTTPException(
-            status_code=500,
-            detail=f"Error generating message: {str(e)}"
-        )
+        logger.error(f"Error uploading image: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/api/image-proxy/{bucket}/{filename:path}")
+async def proxy_image(bucket: str, filename: str):
+    """Proxy image from GCS with optimized headers for WhatsApp preview."""
+    try:
+        url = f"https://storage.googleapis.com/{bucket}/{filename}"
+        
+        async with aiohttp.ClientSession() as session:
+            async with session.get(url) as response:
+                if response.status != 200:
+                    raise HTTPException(status_code=response.status, detail="Failed to fetch image")
+                
+                content = await response.read()
+                
+                # Set headers optimized for WhatsApp preview
+                headers = {
+                    "Content-Type": response.headers.get("Content-Type", "image/jpeg"),
+                    "Content-Length": str(len(content)),
+                    "Cache-Control": "public, max-age=31536000",
+                    "Access-Control-Allow-Origin": "*"
+                }
+                
+                return Response(content=content, headers=headers)
+                
+    except Exception as e:
+        logger.error(f"Error proxying image: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/api/audio/{filename}")
 async def get_audio(filename: str):
@@ -569,6 +581,69 @@ async def shutdown_event():
                     logger.error(f"Error deleting temp file {file}: {str(e)}")
     except Exception as e:
         logger.error(f"Error in shutdown cleanup: {str(e)}")
+
+@app.post("/api/generate-message")
+async def generate_message(request: MessageRequest):
+    """Generate ad message and optionally convert to speech."""
+    try:
+        # Initialize Gemini model for message generation
+        #model = generative_models.GenerativeModel("gemini-1.0-pro")
+        model = generative_models.GenerativeModel("gemini-2.0-flash-exp")
+        
+        # Create prompt for ad message generation
+        prompt = f"""
+        Générez un message publicitaire bref , et engageant en français professionnel à partir du texte suivant:
+        "{request.text}"
+
+        Instructions:
+        - Ne générer que le message publicitaire. Sans aucun autre texte de description
+        - Utilisez un style approprié
+        - Ton: {request.tone}
+        - de 5 à 10 phases et 800 caracteres au maximum
+        - Tutoyer amicalement mais respectueusement
+        - Utilisez des émojis appropriés
+        - Incluez un appel à l'action
+        - le message doit etre inspurant et pousser à l'action 
+        - le message concis et impactant
+        - Mettez en valeur les points clés
+        - Ne pas utiliser de majuscules
+        """
+        
+        try:
+            # Generate the message
+            response = model.generate_content(
+                prompt,
+                generation_config=generative_models.GenerationConfig(
+                    max_output_tokens=1024,
+                    temperature=0.7,
+                    top_p=0.8,
+                    top_k=40
+                )
+            )
+            
+            if not response or not response.text:
+                raise ValueError("No response generated from Gemini")
+                
+            generated_message = response.text.strip()
+            
+            return {
+                "message": generated_message,
+                "audio_url": None
+            }
+            
+        except Exception as model_error:
+            logger.error(f"Text generation error: {str(model_error)}")
+            raise HTTPException(
+                status_code=500,
+                detail=f"Error generating message: {str(model_error)}"
+            )
+        
+    except Exception as e:
+        logger.error(f"Error in generate_message: {str(e)}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Error generating message: {str(e)}"
+        )
 
 if __name__ == "__main__":
     uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=True)
