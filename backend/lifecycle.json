@@ -6,7 +6,7 @@
           "type": "Delete"
         },
         "condition": {
-          "age": 7,
+          "age": 1,
           "matchesPrefix": ["audio-"]
         }
       }

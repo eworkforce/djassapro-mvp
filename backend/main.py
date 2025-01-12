@@ -530,7 +530,7 @@ async def health_check():
     return health_status
 
 async def cleanup_temp_files():
-    """Clean up temporary files older than 1 hour."""
+    """Clean up temporary files older than 5 minutes."""
     try:
         temp_dir = Path("temp")
         if not temp_dir.exists():
@@ -538,8 +538,8 @@ async def cleanup_temp_files():
             
         current_time = time.time()
         for file in temp_dir.glob("*"):
-            # If file is older than 1 hour
-            if current_time - file.stat().st_mtime > 3600:
+            # If file is older than 5 minutes (300 seconds)
+            if current_time - file.stat().st_mtime > 300:
                 try:
                     file.unlink()
                     logger.info(f"Cleaned up old temp file: {file}")
