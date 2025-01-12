@@ -19,6 +19,8 @@ import requests
 import uuid
 import aiofiles
 import logging
+import time
+from fastapi.responses import JSONResponse
 
 # Set up logging
 logging.basicConfig(level=logging.INFO)
@@ -450,6 +452,121 @@ async def get_audio(filename: str):
     except Exception as e:
         logger.error(f"Error serving audio file: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/api/health")
+async def health_check():
+    """Check the health of the application and its dependencies."""
+    health_status = {
+        "status": "healthy",
+        "timestamp": time.time(),
+        "services": {
+            "gcs": {"status": "unknown"},
+            "eleven_labs": {"status": "unknown"},
+            "vertex_ai": {"status": "unknown"}
+        }
+    }
+    
+    # Check GCS
+    try:
+        if bucket and bucket.exists():
+            health_status["services"]["gcs"] = {
+                "status": "healthy",
+                "bucket": BUCKET_NAME
+            }
+        else:
+            health_status["services"]["gcs"] = {
+                "status": "unhealthy",
+                "error": "Bucket not accessible"
+            }
+    except Exception as e:
+        health_status["services"]["gcs"] = {
+            "status": "unhealthy",
+            "error": str(e)
+        }
+    
+    # Check Eleven Labs
+    try:
+        response = requests.get(f"{ELEVEN_LABS_API_URL}/voices", headers=HEADERS)
+        if response.status_code == 200:
+            health_status["services"]["eleven_labs"] = {
+                "status": "healthy",
+                "voices_count": len(response.json().get("voices", []))
+            }
+        else:
+            health_status["services"]["eleven_labs"] = {
+                "status": "unhealthy",
+                "error": f"Status code: {response.status_code}"
+            }
+    except Exception as e:
+        health_status["services"]["eleven_labs"] = {
+            "status": "unhealthy",
+            "error": str(e)
+        }
+    
+    # Check Vertex AI
+    try:
+        # Simple check if Vertex AI is initialized
+        if hasattr(vertexai, "_project") and vertexai._project == PROJECT_ID:
+            health_status["services"]["vertex_ai"] = {
+                "status": "healthy",
+                "project": PROJECT_ID
+            }
+        else:
+            health_status["services"]["vertex_ai"] = {
+                "status": "unhealthy",
+                "error": "Not properly initialized"
+            }
+    except Exception as e:
+        health_status["services"]["vertex_ai"] = {
+            "status": "unhealthy",
+            "error": str(e)
+        }
+    
+    # Set overall status
+    if any(service["status"] == "unhealthy" for service in health_status["services"].values()):
+        health_status["status"] = "unhealthy"
+        return JSONResponse(status_code=503, content=health_status)
+    
+    return health_status
+
+async def cleanup_temp_files():
+    """Clean up temporary files older than 1 hour."""
+    try:
+        temp_dir = Path("temp")
+        if not temp_dir.exists():
+            return
+            
+        current_time = time.time()
+        for file in temp_dir.glob("*"):
+            # If file is older than 1 hour
+            if current_time - file.stat().st_mtime > 3600:
+                try:
+                    file.unlink()
+                    logger.info(f"Cleaned up old temp file: {file}")
+                except Exception as e:
+                    logger.error(f"Error deleting temp file {file}: {str(e)}")
+    except Exception as e:
+        logger.error(f"Error in cleanup: {str(e)}")
+
+@app.on_event("startup")
+async def startup_event():
+    """Run cleanup on startup."""
+    await cleanup_temp_files()
+
+@app.on_event("shutdown")
+async def shutdown_event():
+    """Clean up all temporary files on shutdown."""
+    try:
+        temp_dir = Path("temp")
+        if temp_dir.exists():
+            for file in temp_dir.glob("*"):
+                try:
+                    file.unlink()
+                    logger.info(f"Cleaned up temp file on shutdown: {file}")
+                except Exception as e:
+                    logger.error(f"Error deleting temp file {file}: {str(e)}")
+    except Exception as e:
+        logger.error(f"Error in shutdown cleanup: {str(e)}")
 
 if __name__ == "__main__":
     uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=True)
