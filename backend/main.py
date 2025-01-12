@@ -318,7 +318,8 @@ async def text_to_speech(request: TTSRequest):
     try:
         logger.info(f"Generating voice for text: {request.text[:50]}...")
         
-        # Validate voice exists
+        # Step 1: Voice validation (10%)
+        logger.info("Step 1/5: Validating voice...")
         response = requests.get(f"{ELEVEN_LABS_API_URL}/voices", headers=HEADERS)
         voices = response.json().get("voices", [])
         voice_exists = any(voice["voice_id"] == request.voice_id for voice in voices)
@@ -330,39 +331,40 @@ async def text_to_speech(request: TTSRequest):
                 detail=f"Voice {request.voice_id} not found. Available voices: {available_voices}"
             )
         
-        # Generate voice
+        # Step 2: Voice generation (40%)
+        logger.info("Step 2/5: Generating voice...")
         audio_content = await generate_voice(
             text=request.text,
             voice_id=request.voice_id,
             optimize_streaming_latency=request.optimize_streaming_latency
         )
         
-        logger.info("Voice generated successfully, saving to file...")
-        
-        # Create temporary file
+        logger.info("Step 3/5: Saving audio file...")
+        # Step 3: Save to temp file (60%)
         temp_dir = Path("temp")
         temp_dir.mkdir(exist_ok=True)
         
         temp_file = temp_dir / f"tts_{uuid.uuid4()}.mp3"
         
-        # Save audio content
         async with aiofiles.open(temp_file, 'wb') as f:
             await f.write(audio_content)
         
-        logger.info(f"Audio saved to {temp_file}")
-        
-        # Upload to GCS and get public URL
+        logger.info(f"Step 4/5: Uploading to cloud storage...")
+        # Step 4: Upload to GCS (80%)
         public_url = await upload_to_gcs(str(temp_file), "audio/mpeg")
         logger.info(f"Audio uploaded to GCS: {public_url}")
         
-        # Return both streaming URL and public URL
+        # Step 5: Prepare response (100%)
+        logger.info("Step 5/5: Preparing response...")
         response_data = {
-            "streaming_url": f"/api/audio/{temp_file.name}",  # For local playback
-            "sharing_url": public_url,  # For WhatsApp sharing
-            "filename": temp_file.name
+            "streaming_url": f"/api/audio/{temp_file.name}",
+            "sharing_url": public_url,
+            "filename": temp_file.name,
+            "status": "completed",
+            "progress": 100
         }
         
-        logger.info(f"Returning response: {response_data}")
+        logger.info(f"Voice generation completed successfully")
         return response_data
         
     except HTTPException as he:

@@ -39,8 +39,19 @@
           :disabled="isGeneratingVoice" 
           class="w-full bg-purple-600 text-white px-6 py-2 rounded-lg hover:bg-purple-700 disabled:bg-gray-400 disabled:cursor-not-allowed"
         >
-          {{ isGeneratingVoice ? 'Generating Voice...' : 'Generate Voice' }}
+          {{ isGeneratingVoice ? 'Génération en cours...' : 'Générer la Voix' }}
         </button>
+
+        <!-- Progress Bar -->
+        <div v-if="isGeneratingVoice" class="w-full">
+          <div class="w-full bg-gray-200 rounded-full h-2.5">
+            <div 
+              class="bg-purple-600 h-2.5 rounded-full transition-all duration-300 ease-out"
+              :style="{ width: `${generationProgress}%` }"
+            ></div>
+          </div>
+          <p class="text-sm text-gray-600 mt-1">{{ generationStatus }}</p>
+        </div>
 
         <button 
           @click="shareOnWhatsApp"
@@ -76,6 +87,8 @@ const isGeneratingVoice = ref(false)
 const audioPlayer = ref(null)
 const generatedVoiceBlob = ref(null)
 const audioElement = ref(null)
+const generationProgress = ref(0)
+const generationStatus = ref('')
 
 const handleRecordingComplete = (blob) => {
   console.log('Recording complete, blob size:', blob.size)
@@ -151,42 +164,71 @@ const generateVoice = async () => {
   if (!generatedMessage.value) return
   
   isGeneratingVoice.value = true
+  generationProgress.value = 0
+  generationStatus.value = 'Initialisation...'
+  
   try {
+    // Start request
+    generationProgress.value = 10
+    generationStatus.value = 'Envoi de la requête...'
+    
     const response = await fetch('http://localhost:8000/api/text-to-speech', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
       },
       body: JSON.stringify({
-        text: generatedMessage.value
+        text: generatedMessage.value,
+        voice_id: "Fo36sCvJyueYOBE0TqjC", // CousineDjassaPro voice
+        optimize_streaming_latency: 0
       })
     })
 
     if (!response.ok) {
       const errorData = await response.json()
-      throw new Error(errorData.detail || 'Error generating voice')
+      throw new Error(errorData.detail || 'Erreur lors de la génération de la voix')
     }
 
+    // Simulate progress for each step
+    generationProgress.value = 30
+    generationStatus.value = 'Validation de la voix...'
+    await new Promise(resolve => setTimeout(resolve, 500))
+    
+    generationProgress.value = 50
+    generationStatus.value = 'Génération de la voix...'
+    await new Promise(resolve => setTimeout(resolve, 500))
+    
+    generationProgress.value = 70
+    generationStatus.value = 'Sauvegarde du fichier...'
+    await new Promise(resolve => setTimeout(resolve, 500))
+    
+    generationProgress.value = 90
+    generationStatus.value = 'Préparation de l\'audio...'
+    
     const data = await response.json()
     console.log('Voice generation response:', data)
     
-    // Store both streaming and sharing URLs
     generatedVoiceUrl.value = {
       streaming_url: `http://localhost:8000${data.streaming_url}`,
       sharing_url: data.sharing_url
     }
     
-    // Create audio element for playback
-    if (!audioElement.value) {
-      audioElement.value = new Audio()
-    }
-    audioElement.value.src = generatedVoiceUrl.value.streaming_url
+    generationProgress.value = 100
+    generationStatus.value = 'Terminé!'
     
   } catch (error) {
     console.error('Error generating voice:', error)
+    generationStatus.value = 'Erreur: ' + error.message
     alert(error.message)
   } finally {
-    isGeneratingVoice.value = false
+    // Reset progress after completion or error
+    setTimeout(() => {
+      if (generationProgress.value === 100) {
+        isGeneratingVoice.value = false
+        generationProgress.value = 0
+        generationStatus.value = ''
+      }
+    }, 1000)
   }
 }
 
